@@ -1,0 +1,57 @@
+name: Import Steam workshop GIF
+on:
+  push:
+    paths:
+      - .github/workflows/import-workshop-gif.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import-gif:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify original GIF
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib, json, pathlib, urllib.request
+          want = '0a2bf3d3b14b9fe6bb93e8dac24d41eb36a229e6ac5e31b5908998f8beffb663'
+          candidates = ['https://i.imgur.com/7Rz9TUR.gif', 'https://imgur.com/download/7Rz9TUR']
+          hdr = {'User-Agent':'Mozilla/5.0 (compatible; workshop-image-import/1.0)','Accept':'*/*'}
+          try:
+              r = urllib.request.urlopen(urllib.request.Request('https://api.imgur.com/post/v1/posts/7Rz9TUR?include=media',headers=hdr), timeout=20)
+              data = json.load(r)
+              def walk(x):
+                  if isinstance(x, dict):
+                      for k,v in x.items():
+                          if k in ('url','link') and isinstance(v,str) and (v.endswith('.gif') or v.endswith('.gifv')):
+                              candidates.append(v.replace('.gifv','.gif'))
+                          walk(v)
+                  elif isinstance(x,list):
+                      for v in x: walk(v)
+              walk(data)
+          except Exception as exc:
+              print('Imgur metadata unavailable:', exc)
+          for url in dict.fromkeys(candidates):
+              try:
+                  body = urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=25).read()
+                  sha = hashlib.sha256(body).hexdigest()
+                  print('Source:', url, 'bytes:', len(body), 'SHA256:', sha)
+                  if sha == want:
+                      dest = pathlib.Path('assets/steam/rate-favorite.gif')
+                      dest.parent.mkdir(parents=True, exist_ok=True)
+                      dest.write_bytes(body)
+                      print('Byte-identical source verified')
+                      break
+              except Exception as exc:
+                  print('Unable to download',url,exc)
+          else:
+              raise RuntimeError('No byte-identical GIF found; original attachment not changed')
+          PYCODE
+      - name: Commit verified GIF to main
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add assets/steam/rate-favorite.gif
+          git diff --cached --quiet || (git commit -m 'assets: add original Steam rate and favorite GIF' && git push)
